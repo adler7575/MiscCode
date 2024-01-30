@@ -4,10 +4,12 @@ import java.util.Map;
 import java.util.HashMap;
 
 
+
+
 public class Level2ViewCls implements Level2View{
 
     // Inner class for Order used to store information of an order
-    final class Order {
+    private final class Order {
         // Properties
         Order _nextOrder;
         Order _prevOrder;
@@ -33,14 +35,14 @@ public class Level2ViewCls implements Level2View{
 
     }
     // Inner class treeNode, just store information about a node in binary tree, where each node contains
-    final class TreeNode {
+    private final class TreeNode {
         // properties
         long _nodes_left, _nodes_right;
         BigDecimal _price;
         long _totalQuantity;
 
-        //long _totalLeftQuantity;
-        //long _totalRightQuantity;
+        //long _leftHeight;
+        //long _rightHeight;
         TreeNode _left  // denotes child to the left
                 , _right // denotes possible child to the right
                 , _parent; // denotes parent in tree, used when recalculating Top of Book
@@ -73,16 +75,16 @@ public class Level2ViewCls implements Level2View{
 
 
     // Properties
-    TreeNode BuyTree;
-    TreeNode SellTree;
+    private TreeNode BuyTree;
+    private TreeNode SellTree;
 
-    TreeNode LowestSell;
-    TreeNode HighestBuy;
+    private TreeNode LowestSell;
+    private TreeNode HighestBuy;
 
     // Direct map for connecting a price to a node in either sell or buy tres.
-    final Map<BigDecimal, TreeNode> priceMap;
+    private final Map<BigDecimal, TreeNode> priceMap;
     // Direct map for connecting an orderId to a created or Order somewhere in the two trees.
-    final Map<Long,Order> orderIdMap;
+    private final Map<Long,Order> orderIdMap;
     /// Methods
 
     // Inserts a new order into either sell och buy tree.
@@ -93,6 +95,7 @@ public class Level2ViewCls implements Level2View{
             TreeNode n = priceMap.get(price);
             // If  a node already exists, use it and add another order to it
             if (n != null) {
+                System.out.println("adding a order to a node");
                 Order o = new Order(orderId, price, n, quantity, n._headOrder._side);
                 o._prevOrder = n._tailOrder;
                 n._tailOrder._nextOrder = o;
@@ -102,6 +105,7 @@ public class Level2ViewCls implements Level2View{
                 n._totalQuantity += quantity;
 
             } else {
+                System.out.println("adding a new order node");
                 int cond = -1;
                 n = new TreeNode(price);
                 priceMap.put(price, n);
@@ -181,70 +185,78 @@ public class Level2ViewCls implements Level2View{
     }
 
     // Remove an order from either Sell or Buy tree
-    // Takes order of updating total number of records per node as well as taking care of fixing a potential new
+    // Potentially removes a node from the corresponding tree.
+    // Otherwise updates total number of records per node, as well taking care of fixing a potential new
     // lowestSale och HighestBuy
     public void onCancelOrder(long orderId) {
+
         synchronized (orderIdMap) {
             Order o = orderIdMap.get(orderId);
 
             o._priceNode._totalQuantity -= o._quantity;
             // Should we remove the whole node, as only one remains?
             if (o._priceNode._tailOrder == o._priceNode._headOrder) {
-                if (o._side == Side.BID) {
-                    if (o._priceNode._price.compareTo(BuyTree._price) < 0)
-                        BuyTree._nodes_left--;
-                    else
-                        BuyTree._nodes_right--;
-                } else {
-                    if (o._priceNode._price.compareTo(SellTree._price) < 0)
-                        SellTree._nodes_left--;
-                    else
-                        SellTree._nodes_right--;
+                // Adjust the number of elements to right and left for use with depth of Book
+                if (getBookDepth(o._side)>1) {
+                    if (o._side == Side.BID) {
+                        if (BuyTree._nodes_left > 0 &&o._priceNode._price.compareTo(BuyTree._price) < 0)
+                            BuyTree._nodes_left--;
+                        else if (BuyTree._nodes_right > 0)
+                            BuyTree._nodes_right--;
+                    } else {
+                        if (SellTree._nodes_left > 0 && o._priceNode._price.compareTo(SellTree._price) < 0)
+                            SellTree._nodes_left--;
+                        else if (SellTree._nodes_right > 0)
+                            SellTree._nodes_right--;
+                    }
                 }
-                TreeNode tmpNode = o._priceNode;
-                // Unmap from map structure first
-                priceMap.remove(tmpNode._price);
+                // Unmap from pricemap structure
+                priceMap.remove(o._priceNode._price);
                 // Fix changes in lowestsell, highestbuy
                 if (o._side == Side.BID) {
-                    if (o._priceNode == BuyTree)
+                    if (o._priceNode == BuyTree && BuyTree._nodes_right == 0 && BuyTree._nodes_left ==0)
                         BuyTree = HighestBuy = null;
                     else if (o._priceNode == HighestBuy)
                         HighestBuy = HighestBuy._parent;
                 } else {
-                    if (o._priceNode == SellTree)
+                    if (o._priceNode == SellTree  && SellTree._nodes_right == 0 && SellTree._nodes_left ==0)
                         SellTree = LowestSell = null;
                     else if (o._priceNode == LowestSell)
                         LowestSell = LowestSell._parent;
                 }
-
-                if (tmpNode._right != null)
-                    o._priceNode = tmpNode._right;
-                else if (tmpNode._left != null)
-                    o._priceNode = tmpNode._left;
-                else
-                    o._priceNode = null;
+                // Now to the semi tricky part, remove the node itself.
+                o._priceNode = deleteNode(o._priceNode);
+                if (o._side == Side.BID && BuyTree == null)
+                    BuyTree = o._priceNode;
+                else if (o._side == Side.ASK && SellTree == null)
+                    SellTree = o._priceNode;
             } // The node should remain but order needs to be removed
             else { // Three cases, either with  we have a headorder, tailorder or an order in the middle
                 if (o._priceNode._headOrder == o) {
+                    System.out.println("Deleting a headnode");
                     Order temp = o._priceNode._headOrder;
                     o._priceNode._headOrder = o._priceNode._headOrder._nextOrder;
                     o._priceNode._headOrder._prevOrder = null;
                     temp._nextOrder = null;
                 } else if (o._priceNode._tailOrder == o) {
+                    System.out.println("Deleting a tailnode");
                     Order temp = o._priceNode._tailOrder;
                     o._priceNode._tailOrder = o._priceNode._tailOrder._prevOrder;
                     o._priceNode._tailOrder._nextOrder = null;
                     temp._prevOrder = null;
 
                 } else {
+                    System.out.println("Deleting a midnode");
                     o._prevOrder._nextOrder = o._nextOrder;
                     o._nextOrder._prevOrder = o._prevOrder;
                     o._prevOrder = null;
                     o._nextOrder = null;
+
                 }
             }
             // finally unref the order from the map
             orderIdMap.remove(orderId);
+            o = null;
         }
     }
 
@@ -296,6 +308,52 @@ public class Level2ViewCls implements Level2View{
         return LowestSell == null? null: LowestSell._price;
     }
 
+    private TreeNode deleteNode(TreeNode root) {
+        // Base case
+        if (root == null)
+            return root;
+
+        // If one of the children is empty
+        if (root._left == null) {
+            return root._right;
+        } else if (root._right == null) {
+            return root._left;
+        }
+
+        // If both children exist
+        else {
+
+            TreeNode succParent = root;
+
+            // Find successor
+            TreeNode succ = root._right;
+            while (succ._left != null) {
+                succParent = succ;
+                succ = succ._left;
+            }
+
+            // Delete successor.  Since successor
+            // is always left child of its parent
+            // we can safely make successor's right
+            // right child as left of its parent.
+            // If there is no succ, then assign
+            // succ.right to succParent.right
+            if (succParent != root)
+                succParent._left = succ._right;
+            else
+                succParent._right = succ._right;
+
+            // Copy Successor Data to root
+            root._price = succ._price;
+            root._nodes_right = succ._nodes_right;
+            root._nodes_left = succ._nodes_left;
+            root._tailOrder = succ._tailOrder;
+            root._headOrder = succ._tailOrder;
+            root._totalQuantity = succ._totalQuantity;
+            // Delete Successor and return root
+            return root;
+        }
+    }
 
 
 }
